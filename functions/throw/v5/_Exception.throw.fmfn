@@ -1,0 +1,310 @@
+/*	@function _Exception.throw ( _level; _type; _code; _message )
+	@about generates an XMl Exception object
+	@author Nils Waldherr <nils.waldherr@filemakergarage.com>
+	@version 1.0.0-100 - 29.08.2007 - NW
+	         1.1.0-100 - 26.09.2007 - NW: fmg_parameter_set()
+	         2.1.0-100 - 07.05.2010
+	         2.1.1-100 - 11.10.2010 - Nils Waldherr: hide $pass in scriptparameters
+	         2.5.0-100 - 01.02.2011 - Nils Waldherr: re-implementing _class
+	         3.0.0-100 - Nils Waldherr: renamed, 
+	         3.1.0-100 - 08.08.2012 - NW: added mode --hideparams
+	         4.0.0-100 - 29.08.2012 - NW: added _level and automatic logging
+	         4.1.0-100 - 31.10.2012 - Nils Waldherr: version mode
+	         4.1.1-100 - 28.06.2013 - Nils Waldherr: bugfix
+	         4.2.0-102 - 05.03.2014 - NW: moved to f1
+	         5.0.0-108 - 25.05.2014 - NW: integrated logging, array instead of xml
+	         5.1.0-109 - 26.05.2014 - NW: eval fix
+	         5.2.0-110 - 15.06.2014 - NW: missing level fix
+	         5.3.0-111 - 15.07.2015 - NW: dependency optional
+	         5.4.0-112 - 08.09.2015 - NW: stacklevel
+	         5.5.0-113 - 20.12.2015 - NW: _Script.debug()
+	         5.6.0-114 - 12.02.2016 - NW: revision, toString
+	         5.6.1-115 - 29.02.2016 - NW: device, utc
+	         5.7.0-116 - 07.04.2016 - NW: default level 2
+	         5.8.0-118 - 31.03.2017 - NW: uuid, --arrayget new
+	         5.9.0-119 - 08.09.2017 - NW: script_id
+	         5.10.0-120 - 24.09.2017 - NW: $_Exception.string
+	         5.11.1-121 - 22.10.2017 - NW: $_Exception.window
+	         
+	@package local.exception
+	@param STRING _level = 3 -- name or id
+		5 - DEBUG
+		4 - INFO (UserCancelled, NoRecordsFound)
+		3 - WARNING
+		2 - ERROR
+		1 - FATAL
+		0 - OFF
+	@param STRING _type = "F1" (FileMaker, SQLState, TroiFile, AppleScript, Java) -- used for message look-up 
+	@param STRING _code -- error code, used for look-up in S_Message together with _type
+	@param STRING _message -- custom message, will be added to default message in S_Message
+	@return STRING _Exception object
+
+	@uses function _Exception.resolveError()
+	@uses function D_DebugLog.insert()
+	@uses function S_Message.get() v1.0 (opt.)
+	
+	@test _Exception2.throw(""; ""; ""; "" ) -> "<exception>...</exception>"
+	@test _Exception2.throw("--xmlset"; "key"; "value" ) -> "<key>value</key>"
+	@test _Exception2.throw("--xmlget"; "<key>value</key>"; "key" ) -> "value"
+	@test _Exception2.throw("--xmlhide"; "<pwd>secret</pwd>"; "pwd" ) -> "<pwd>*****</pwd>"
+	@test _Exception2.throw("--xmlupdate¶pwd"; "<pwd>secret</pwd>"; "*****" ) -> "<pwd>*****</pwd>"
+
+	@todo Eingaben escapen (_message)
+	@todo Auflösen von Fehlermeldungen per Script?
+	@todo Scriptparameter mit führendem '.' automatisch ausblenden
+	@todo xmlhide auflösen
+	@todo xmlupdate implementieren für stack
+	@todo psos-info, device
+ */ 
+
+Falls(
+	// return version
+	$_Db.inVersionMode;  SetzeVar( $_Db.function_name = "_Exception.throw"; 5008000 );
+
+	/*	--------------------------------------------------------------------------------
+		GETKEYS
+		param _type as i
+	*/
+	_level = "--getkeys";
+	SetzeVar(
+		keys = "level¶type¶code¶message¶database¶window¶script¶script_id¶parameter¶table¶layout¶id¶timestamp¶utc¶account¶account_privileges¶script_privileges¶layout_privileges¶device¶log¶stack¶stacklevel";
+		Falls(
+			_type > 0;
+			HoleWert( keys; _type );
+			keys
+		)
+	);
+			
+		
+	
+	/*	GETMESSAGE
+		--------------------------------------------------------------------------------
+		resolving error code of FileMaker, F1, etc.
+		param _type = type
+		param _code = code
+	*/
+	_level = "--getmessage";
+	SetzeVar(
+		message = Falls(
+			// fmerror
+			_type = "FileMaker";
+			_Exception.resolveFmError( _code; "" );
+
+			// f1 error
+			_type = "F1"; 
+			""
+//			& S_UI_Message.get( type; code );
+		);
+		Falls(
+			// message uses <message> tag
+			Position( message; "<message>"; 1; 1 );
+			Austauschen( message; "<message>"; _message );
+			
+			// else add custom message
+			Austauschen( Liste( message; _message ); ¶; ": " )
+		)
+	);
+	
+	
+	
+	
+	/*	ARRAYGET
+		--------------------------------------------------------------------------------
+		param _type as array
+		param _code as key
+	*/
+	_level = "--arrayget";
+	SetzeVar(
+		// check if key exists
+		start = Position( _type; "\"" & _code & "\":\""; 1; 1 );
+		Falls(
+			// if key is present
+			start;
+		
+			Let(
+				[
+					i = MusterAnzahl( ZeichenLInks( _type; start ); ¶ ) +1;
+					param = HoleWert( _type; i );
+					param = Austauschen( param; "\":\""; "\"¶\"" )
+				];
+				Berechne( HoleWert( param; 2 ))
+			)
+		)
+	);
+	
+	
+	
+	/*	GETPARAMS
+		--------------------------------------------------------------------------------
+		hides all parameters beginning with '_'
+		used by _Exception.catch()
+		param _type as i
+		return array with modified script parameters
+	*/
+	_level = "--getparams";
+	SetzeVar(
+		[
+			i = Falls( IstLeer( _type ); 1; _type );
+			item = HoleWert( Hole( ScriptParameter ); i )
+		];
+		Falls( i >1; ¶ )
+		& Falls(
+			// if item should be hidden
+			ZeichenLinks( item; 2 ) = "\"_";
+			SetzeVar(
+				// get key
+				key = Berechne( HoleWert( Austauschen( item; "\":\""; "\"¶" ); 1 ));
+				Zitat( key ) & ":" & Zitat( "*****" )
+			);
+			// else return item
+			item
+		)
+		& Falls( 
+			i < ElementeAnzahl( Hole( ScriptParameter ));
+			_Exception.throw ( "--getparams"; i +1; ""; "" )
+		)
+	);
+	
+	
+	/*	LIST
+		--------------------------------------------------------------------------------
+		generate array from local vars
+		param _type as i
+	*/
+	_level = "--list";
+	SetzeVar(
+		[
+			i = Falls( IstLeer( _type ); 1; _type );
+			keys = _Exception.throw( "--getkeys"; ""; ""; "" ); 
+			key = HoleWert( keys; i );
+			value = Berechne( "$_Exception." & key )
+		];
+		Falls( i >1; ¶ )
+		& Zitat( key ) & ":" & Zitat( value )
+		& Falls( _type < ElementeAnzahl( keys ); _Exception.throw( "--list"; i +1; ""; "" ))
+	);
+		
+	
+	/*	SETVARS
+		--------------------------------------------------------------------------------
+		param _type as i
+		uses $_Exception.array
+	*/
+	_level = "--setvars";
+	SetzeVar(
+		[
+			i = Falls( IstLeer( _type ); 1; _type );
+			keys = _Exception.throw( "--getkeys"; ""; ""; "" ); 
+			key = HoleWert( keys; i );
+			$value = _Exception.throw( "--arrayget"; $_Exception.array; key; "" )
+		];
+		Berechne( "Let( $_Exception." & key & " = $value ; 1 )" )
+		+ Falls( 
+			i < ElementeAnzahl( keys ); 
+			_Exception.throw( "--setvars"; i +1; ""; "" );
+			SetzeVar(
+				$_Exception.string = "Level: " & Auswahl( $_Exception.level; "NONE"; "FATAL"; "ERROR"; "WARNING"; "INFO"; "DEBUG")
+				& "¶Type: " 		& $_Exception.type
+				& "¶Code: " 		& $_Exception.code
+				& "¶Message: " 	    & $_Exception.message
+				& "¶Database: " 	& $_Exception.database
+				& "¶Window: "   	& $_Exception.window
+				& "¶Script: " 		& $_Exception.script
+				& "¶Script ID: " 		& $_Exception.script_id
+				& "¶Parameter: " 	& Austauschen( $_Exception.parameter; ¶; ", ")
+				& "¶Table: " 		& $_Exception.table
+				& "¶Layout: " 		& $_Exception.layout
+				& "¶Timestamp: "	& $_Exception.timestamp
+				& "¶Account: " 		& $_Exception.account
+				& "¶Account privileges: " & $_Exception.account_privileges
+				& "¶Script privileges: "  & $_Exception.script_privileges
+				& "¶Layout privileges: "  & $_Exception.layout_privileges
+				& "¶¶Error log: " 	& $_Exception.log
+				& "¶¶Stack trace:¶¶" & $_Exception.stack;
+				""
+			)
+		)
+	);
+		
+	
+	/*	MAIN
+		--------------------------------------------------------------------------------
+	*/
+	SetzeVar(
+		[
+			// is there a FileMaker error?
+			is_fmerror = Hole(LetzteFehlerNr)≠0;
+			
+			// set level
+			$_Exception.level = Falls( nicht istleer( _level ); _level +0; 2 );
+			
+			// setting the Type
+			$_Exception.type = Falls(
+
+				// manually
+				NICHT IstLeer( _type ); _type;
+
+				// automatically FileMaker
+				is_fmerror UND IstLeer( _code ); "FileMaker" ;
+				
+				// default
+				"F1"
+			);
+			
+			// setting the Code
+			$_Exception.code = Falls (
+			
+				// if it was specified, use it
+				NICHT IstLeer( _code ); _code;
+				
+				// else if there is a FileMaker error, use this
+				$_Exception.type = "FileMaker"; Hole(LetzteFehlerNr);
+				
+				// else set to generic
+				"Error"
+			);
+			
+			// resolve error code - uncomment if sql lookup is available
+			$_Exception.message = _Exception.throw( "--getmessage"; $_Exception.type; $_Exception.code; _message );
+
+			// environment			
+			$_Exception.database 			= Hole( DateiName );
+			$_Exception.window  			= Hole( FensterName );
+			$_Exception.script 				= Hole( ScriptName );
+			$_Exception.script_id			= Let(
+					[
+						n = Scriptnamen("");
+						p = Position( ¶ & n & ¶; ¶ & $_Exception.script & ¶; 1; 1 )
+					];
+					Falls( p; HoleWert( ScriptIDs(""); MusterAnzahl( ZeichenLinks(n;p); ¶ )+1 ))
+				  );
+			$_Exception.table 				= Hole( LayoutTabellenname );
+			$_Exception.layout 				= Hole( LayoutName );
+			$_Exception.timestamp 			= Hole( HostZeitstempel );
+			$_Exception.utc       			= Hole( SystemUhrzeitUTCMillisekunden );
+			$_Exception.account 			= Hole( Kontoname );
+			$_Exception.account_privileges 	= Hole( KontoBerechtigungenName );
+			$_Exception.script_privileges 	= Hole( AktuelleBerechtigungenName );
+			$_Exception.layout_privileges 	= Hole( LayoutBerechtigungen );
+			$_Exception.device			 	= Hole( PersistentID );
+			$_Exception.id  				= Hole( UUID );
+
+			// get parameters, hide passwords				
+			$_Exception.parameter = _Exception.throw( "--getparams"; ""; ""; "" );
+			
+			// stack foundation
+			$_Exception.stacklevel = 0;
+			$_Exception.stack = Liste(
+				"#0 " & Hole(DateiName) & " " & Hole(ScriptName);
+				$_Exception.parameter
+			) & ¶;
+	
+			// compose exception object
+			$_Exception.array = _Exception.throw( "--list"; ""; ""; "" );
+			$_Exception = Zitat( "exception" ) & ":" & Zitat( $_Exception.array )
+		];
+		$_Exception
+	)
+	// debug log
+	& SetzeVar( r = BerechnungsFehler( Berechne( "_Script.debug(0)" )); "" )
+)

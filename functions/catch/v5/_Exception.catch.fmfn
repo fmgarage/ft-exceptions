@@ -1,0 +1,87 @@
+/*	@function _Exception.catch ( _code ) 
+	@about sets local variables
+	@author Nils Waldherr <nils.waldherr@filemakergarage.com>
+	@copyright ©2009-2014 Filemakergarage
+	@package local.exception
+	@license http://creativecommons.org/licenses/LGPL/2.1/ LGPL 
+	@version 1.2.0-100 – 05.10.2007 - Nils Waldherr
+             2.1.0-100 - 07.05.2010: log-level neu
+	         2.1.1-100 - 11.10.2010 - Nils Waldherr: hiding passwords
+	         2.5.0-100 - 01.02.2011 - Nils Waldherr: re-implementing class concept, removed parameter _typ
+	         3.0.0-101 - 22.03.2012 - Nils Waldherr: renamed, parameters changed, dropped support for _exception, 
+	         3.1.0-102 - 04.07.2012 - NW: removed case "$_Exception.alreay set"
+	         3.2.0-103 - 08.08.2012 - NW: hiding all parameters beginning with '_'
+	         3.3.0-104 - 31.10.2012 - NW: version mode
+	         4.1.0-105 - 05.05.2014 - NW: moved to local
+	         5.0.0-106 - 25.05.2014 - NW: handles xml and arrays
+	         5.0.1-108 - 26.05.2014 - NW: fix
+	         5.1.0-109 - 08.09.2015 - NW: revision, stacklevel
+	         5.2.0-110 - 31.03.2017 - NW: id, removed <exception>
+	         
+	@package local.exception
+	@param string _code = "Error" -- use predefined classes like "UserCancelled" or custom classes ("SomethingWentWrong"
+	@return BOOL
+	
+	@uses function _Exception.throw() version 5.0
+	@uses function _Exception.toArray()
+	
+	@test _Exception.catch( "UserCancelled" ) -> 1
+
+*/
+Falls(
+	// return version
+	$_Db.inVersionMode; SetzeVar( $_Db.function_name = "_Exception.catch"; 5002000 );
+
+	// no exception, everything went fine
+	Position( Hole(ScriptErgebnis); "\"exception\":\""; 1; 1 )
+	ODER Hole(LetzteFehlerNr);
+	
+	// set exception as array
+	SetzeVar(
+		[
+			exception_array = Falls(
+				// array exception in script result
+				Position( Hole(ScriptErgebnis); "\"exception\":\""; 1; 1 );
+				_Exception.throw( "--arrayget"; Hole(ScriptErgebnis); "exception"; "" );
+		
+				// filemaker error executing the script (e.g. permissions)
+				Hole(LetzteFehlerNr);
+				_Exception.throw( "--arrayget"; _Exception.throw("";"";"";""); "exception"; "" )
+			);
+			code = _Exception.throw( "--arrayget"; exception_array; "code"; "" )
+		];
+			
+		Falls(
+			// code does not match filter
+			NICHT IstLeer( _code ) UND _code ≠ code; Falsch;
+			
+			// re-compose exception object
+			SetzeVar(
+				[
+					// localize exception object
+					$_Exception.array = exception_array;
+
+					// set all $_Exception.* vars
+					r = _Exception.throw( "--setvars"; ""; ""; "" );
+
+					// get local parameters, hide passwords
+					parameter = _Exception.throw( "--getparams"; ""; ""; "" );
+
+					// append stack
+					$_Exception.stacklevel = $_Exception.stacklevel +1;
+					$_Exception.stack = Liste(
+						$_Exception.stack;
+						"#" & $_Exception.stacklevel & " " & Hole(DateiName) & " " & Hole(ScriptName);
+						parameter
+					)
+					& ¶;
+					
+					// compose exception object from vars
+					$_Exception.array = _Exception.throw( "--list"; 1; ""; "" );
+					$_Exception = Zitat( "exception" ) & ":" & Zitat( $_Exception.array )
+				];
+				Wahr
+			)
+		)
+	)
+)
